@@ -434,9 +434,8 @@ def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4):
             log.info("failed to write to '%s'" % file_record.filename, exc_info=True)
     return False
 
+
 # TODO: write tests for this function
-
-
 def fetch_files(manifest_file, base_urls, overwrite, filenames=[]):
     # Lets load the manifest file
     try:
