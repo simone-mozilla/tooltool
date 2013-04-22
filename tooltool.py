@@ -454,7 +454,6 @@ def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4, cach
             shutil.copy(os.path.join(os.getcwd(), file_record.filename), os.path.join(cache_folder, file_record.digest))
             log.info("Local cache %s updated with %s" % (cache_folder, file_record.filename))
         except IOError:
-            #TODO s
             log.info('Impossible to add file %s to cache folder %s' % (file_record.filename, cache_folder), exc_info=True)
     return fetched
 
