@@ -27,6 +27,7 @@ import optparse
 import logging
 import hashlib
 import urllib2
+import shutil
 
 try:
     import simplejson as json  # I hear simplejson is faster
@@ -378,11 +379,13 @@ def add_files(manifest_file, algorithm, filenames):
 
 # TODO: write tests for this function
 
-def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4):
+def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4, cache_folder=None):
     # A file which is requested to be fetched that exists locally will be hashed.
     # If the hash matches the requested file's hash, nothing will be done and the
     # function will return.  If the function is told to overwrite and there is a
     # digest mismatch, the exiting file will be overwritten
+
+    #case 1: file already in current working directory
     if file_record.present():
         if file_record.validate():
             log.info("existing '%s' is valid, not fetching" % file_record.filename)
@@ -399,6 +402,17 @@ def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4):
             # Let's bail!
             return False
 
+    # case 2: file already in cache
+    if cache_folder:
+        try:
+            shutil.copy(os.path.join(cache_folder, file_record.digest), os.path.join(os.getcwd(), file_record.filename))
+            log.info("File %s retrieved from local cache %s" % (file_record.filename, cache_folder))
+            return True
+        except IOError:
+            log.info("File %s not present in local cache folder %s" % (file_record.filename, cache_folder))
+
+    #case 3: file needs to be fetched from remote url; local cache (if any) needs to be updated
+    fetched = False
     for base_url in base_urls:
         # Generate the URL for the file on the server side
         url = "%s/%s/%s" % (base_url, file_record.algorithm, file_record.digest)
@@ -426,17 +440,27 @@ def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4):
                               (url, file_record.filename, file_record.size - size))
                 else:
                     log.info("Success! File %s fetched from %s" % (file_record.filename, base_url))
-                    return True
+                    fetched = True
         except (urllib2.URLError, urllib2.HTTPError, ValueError) as e:
             log.info("..failed to fetch '%s' from %s" % (file_record.filename, base_url))
             log.debug("%s" % e)
         except IOError:
             log.info("failed to write to '%s'" % file_record.filename, exc_info=True)
-    return False
+
+    # I am managing a cache and a new file has just been retrieved from a remote location
+    if cache_folder and fetched:
+        log.info("Updating local cache %s.." % cache_folder)
+        try:
+            shutil.copy(os.path.join(os.getcwd(), file_record.filename), os.path.join(cache_folder, file_record.digest))
+            log.info("Local cache %s updated with %s" % (cache_folder, file_record.filename))
+        except IOError:
+            #TODO s
+            log.info('Impossible to add file %s to cache folder %s' % (file_record.filename, cache_folder), exc_info=True)
+    return fetched
 
 
 # TODO: write tests for this function
-def fetch_files(manifest_file, base_urls, overwrite, filenames=[]):
+def fetch_files(manifest_file, base_urls, overwrite, filenames=[], cache_folder=None):
     # Lets load the manifest file
     try:
         manifest = open_manifest(manifest_file)
@@ -452,7 +476,7 @@ def fetch_files(manifest_file, base_urls, overwrite, filenames=[]):
     for f in manifest.file_records:
         if f.filename in filenames or len(filenames) == 0:
             log.debug("fetching %s" % f.filename)
-            if fetch_file(base_urls, f, overwrite):
+            if fetch_file(base_urls, f, overwrite, cache_folder=cache_folder):
                 fetched_files.append(f)
             else:
                 failed_files.append(f.filename)
@@ -480,6 +504,13 @@ def process_command(options, args):
     cmd_args = args[1:]
     log.debug("processing '%s' command with args '%s'" % (cmd, '", "'.join(cmd_args)))
     log.debug("using options: %s" % options)
+
+    #better to check early and exit in case the provided cache folder does not exist
+    if options.get('cache_folder'):
+        if (not os.path.exists(options.get('cache_folder')) or not os.path.isdir(options.get('cache_folder'))):
+            log.critical('Folder "%s" does not exist and cannot therefore be used as a local cache' % options.get('cache_folder'))
+            return False
+
     if cmd == 'list':
         return list_manifest(options['manifest'])
     if cmd == 'validate':
@@ -491,7 +522,7 @@ def process_command(options, args):
             log.critical('fetch command requires at least one url provided using ' +
                          'the url option in the command line')
             return False
-        return fetch_files(options['manifest'], options['base_url'], options['overwrite'], cmd_args)
+        return fetch_files(options['manifest'], options['base_url'], options['overwrite'], cmd_args, cache_folder=options['cache_folder'])
     else:
         log.critical('command "%s" is not implemented' % cmd)
         return False
@@ -541,6 +572,8 @@ def main():
                       help='if fetching, remote copy will overwrite a local copy that is different. ')
     parser.add_option('--url', dest='base_url', action='append',
                       help='base url for fetching files')
+    parser.add_option('-c', '--cache_folder', dest='cache_folder',
+                      help='Local cache folder')
 
     (options_obj, args) = parser.parse_args()
     # Dictionaries are easier to work with
