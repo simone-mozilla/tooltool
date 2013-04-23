@@ -435,12 +435,8 @@ def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4, cach
                     size += len(indata)
                     if indata == '':
                         k = False
-                if size != file_record.size:
-                    log.error("transfer from %s to %s failed due to a difference of %d bytes" %
-                              (url, file_record.filename, file_record.size - size))
-                else:
-                    log.info("Success! File %s fetched from %s" % (file_record.filename, base_url))
-                    fetched = True
+                log.info("File %s fetched from %s" % (file_record.filename, base_url))
+                fetched = True
         except (urllib2.URLError, urllib2.HTTPError, ValueError) as e:
             log.info("..failed to fetch '%s' from %s" % (file_record.filename, base_url))
             log.debug("%s" % e)
@@ -486,6 +482,7 @@ def fetch_files(manifest_file, base_urls, overwrite, filenames=[], cache_folder=
     # manifest specified
     for localfile in fetched_files:
         if not localfile.validate():
+            failed_files.append(f.filename)
             log.error("'%s'" % localfile.describe())
 
     # If we failed to fetch or validate a file, we need to fail
