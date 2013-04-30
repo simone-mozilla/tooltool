@@ -587,7 +587,7 @@ def process_command(options, args):
                 os.makedirs(options.get('cache_folder'), 0700)
                 log.info("cache_folder %s has been created" % options.get('cache_folder'))
             except OSError:
-                log.critical('Impossiblt to create folder "%s"' % options.get('cache_folder'), exc_info=True)
+                log.critical('Impossible to create folder "%s"' % options.get('cache_folder'), exc_info=True)
                 return False
 
     if cmd == 'list':
@@ -662,7 +662,7 @@ def main():
     parser.add_option('-c', '--cache_folder', dest='cache_folder',
                       help='Local cache folder')
     parser.add_option('-s', '--size',
-                      help='free space required (in GB, default 3)', dest='size',
+                      help='free space required (in GB)', dest='size',
                       type='float', default=0.)
     parser.add_option('', '--max-age', dest='max_age', type='int', default=0,
                       help='''maximum age (in days) for files.  If any file
