@@ -28,6 +28,8 @@ import logging
 import hashlib
 import urllib2
 import shutil
+import sys
+import time
 
 try:
     import simplejson as json  # I hear simplejson is faster
@@ -377,8 +379,13 @@ def add_files(manifest_file, algorithm, filenames):
     return all_files_added
 
 
-# TODO: write tests for this function
+# used to modify mtime in cached files
+# mtime is used by the purge command
+def touch(f):
+    os.utime(f, None)
 
+
+# TODO: write tests for this function
 def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4, cache_folder=None):
     # A file which is requested to be fetched that exists locally will be hashed.
     # If the hash matches the requested file's hash, nothing will be done and the
@@ -407,6 +414,7 @@ def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4, cach
         try:
             shutil.copy(os.path.join(cache_folder, file_record.digest), os.path.join(os.getcwd(), file_record.filename))
             log.info("File %s retrieved from local cache %s" % (file_record.filename, cache_folder))
+            touch(os.path.join(cache_folder, file_record.digest))
             return True
         except IOError:
             log.info("File %s not present in local cache folder %s" % (file_record.filename, cache_folder))
@@ -449,6 +457,7 @@ def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4, cach
         try:
             shutil.copy(os.path.join(os.getcwd(), file_record.filename), os.path.join(cache_folder, file_record.digest))
             log.info("Local cache %s updated with %s" % (cache_folder, file_record.filename))
+            touch(os.path.join(cache_folder, file_record.digest))
         except IOError:
             log.info('Impossible to add file %s to cache folder %s' % (file_record.filename, cache_folder), exc_info=True)
     return fetched
@@ -491,6 +500,75 @@ def fetch_files(manifest_file, base_urls, overwrite, filenames=[], cache_folder=
         return False
     return True
 
+if sys.platform == 'win32':
+    # os.statvfs doesn't work on Windows
+    import win32file
+
+    def freespace(p):
+        secsPerClus, bytesPerSec, nFreeClus, totClus = win32file.GetDiskFreeSpace(p)
+        return secsPerClus * bytesPerSec * nFreeClus
+else:
+
+    def freespace(p):
+        "Returns the number of bytes free under directory `p`"
+        r = os.statvfs(p)
+        return r.f_frsize * r.f_bavail
+
+
+def remove(absolute_file_path):
+    try:
+        os.remove(absolute_file_path)
+    except OSError as e:
+        log.info("Impossible to remove %s" % absolute_file_path, exc_info=True)
+
+
+def purge(folder, max_age, gigs):
+    """If gigs is non 0, it deletes files in `folder` until `gigs` GB are free, starting from older files.
+    If max_age is non 0, it deletes all files older than max_age, regardless of the gigs parameter.
+    If both parameters are 0, a full cleanup is performed.
+    No recursive deletion of files in subfolder is performed."""
+
+    gigs *= 1024 * 1024 * 1024
+    threshold = time.time() - max_age * 24 * 60 * 60 * 1.
+
+    files = []
+    try:
+        for f in os.listdir(folder):
+            p = os.path.join(folder, f)
+            # it delete files in folder without going into subfolders, assuming the cache has a flat structure
+            if not os.path.isfile(p):
+                continue
+            mtime = os.path.getmtime(p)
+            files.append((mtime, p))
+    except:
+        log.info('Impossible to list content of folder %s' % folder, exc_info=True)
+
+    files.sort()
+
+    enough_free_space_yet = False
+    found_youngest_file_still_older_than_max_age_yet = False
+    # since 'files' has been ordered, iteration is from old to new files
+    while files:
+        mtime, f = files.pop(0)
+        if max_age and not found_youngest_file_still_older_than_max_age_yet:
+            if mtime < threshold:
+                log.info("removing %s because it's older than %s days ago" % (f, str(max_age)))
+                remove(f)
+            else:
+                found_youngest_file_still_older_than_max_age_yet = True
+
+        if gigs and not enough_free_space_yet:
+            if freespace(folder) >= gigs:
+                enough_free_space_yet = True
+            else:
+                log.info("removing %s to free up space" % f)
+                remove(f)
+
+        if not gigs and not max_age:
+            # neither gigs or max_age are specified, performing a full cleanup
+            log.info("Full cache purge: removing %s" % f)
+            remove(f)
+
 
 # TODO: write tests for this function
 def process_command(options, args):
@@ -503,9 +581,14 @@ def process_command(options, args):
 
     #better to check early and exit in case the provided cache folder does not exist
     if options.get('cache_folder'):
-        if (not os.path.exists(options.get('cache_folder')) or not os.path.isdir(options.get('cache_folder'))):
-            log.critical('Folder "%s" does not exist and cannot therefore be used as a local cache' % options.get('cache_folder'))
-            return False
+        if (not os.path.exists(options.get('cache_folder'))):
+            try:
+                log.info("The specified cache_folder %s does not exist" % options.get('cache_folder'))
+                os.makedirs(options.get('cache_folder'), 0700)
+                log.info("cache_folder %s has been created" % options.get('cache_folder'))
+            except OSError:
+                log.critical('Impossiblt to create folder "%s"' % options.get('cache_folder'), exc_info=True)
+                return False
 
     if cmd == 'list':
         return list_manifest(options['manifest'])
@@ -513,6 +596,12 @@ def process_command(options, args):
         return validate_manifest(options['manifest'])
     elif cmd == 'add':
         return add_files(options['manifest'], options['algorithm'], cmd_args)
+    elif cmd == 'purge':
+        if not options.get('cache_folder'):
+            log.critical('please specify the cache_folder to be purged with -c or --cache_folder option')
+            return False
+        else:
+            purge(folder=options['cache_folder'], max_age=options['max_age'], gigs=options['size'])
     elif cmd == 'fetch':
         if not options.get('base_url'):
             log.critical('fetch command requires at least one url provided using ' +
@@ -542,6 +631,8 @@ def process_command(options, args):
 #   -?only ever locally to digest as filename, symlink to real name
 #   -?maybe deal with files as a dir of the filename with all files in that dir as the versions of that file
 #      - e.g. ./python-2.6.7.dmg/0123456789abcdef and ./python-2.6.7.dmg/abcdef0123456789
+
+
 def main():
     # Set up logging, for now just to the console
     ch = logging.StreamHandler()
@@ -570,6 +661,13 @@ def main():
                       help='base url for fetching files')
     parser.add_option('-c', '--cache_folder', dest='cache_folder',
                       help='Local cache folder')
+    parser.add_option('-s', '--size',
+                      help='free space required (in GB, default 3)', dest='size',
+                      type='float', default=0.)
+    parser.add_option('', '--max-age', dest='max_age', type='int', default=0,
+                      help='''maximum age (in days) for files.  If any file
+                              is older than this (based on mtime), it will be deleted, regardless of how
+                              much free space is required.''')
 
     (options_obj, args) = parser.parse_args()
     # Dictionaries are easier to work with
