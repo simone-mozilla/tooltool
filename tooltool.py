@@ -379,9 +379,9 @@ def add_files(manifest_file, algorithm, filenames):
     return all_files_added
 
 
-# used to modify mtime in cached files
-# mtime is used by the purge command
 def touch(f):
+    """Used to modify mtime in cached files;
+    mtime is used by the purge command"""
     os.utime(f, None)
 
 
