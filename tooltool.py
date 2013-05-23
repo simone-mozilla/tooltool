@@ -382,7 +382,10 @@ def add_files(manifest_file, algorithm, filenames):
 def touch(f):
     """Used to modify mtime in cached files;
     mtime is used by the purge command"""
-    os.utime(f, None)
+    try:
+        os.utime(f, None)
+    except:
+        log.info('impossible to update utime of file %s' % f)
 
 
 # TODO: write tests for this function
@@ -446,14 +449,14 @@ def fetch_file(base_urls, file_record, overwrite=False, grabchunk=1024 * 4, cach
                 log.info("File %s fetched from %s" % (file_record.filename, base_url))
                 fetched = True
         except (urllib2.URLError, urllib2.HTTPError, ValueError) as e:
-            log.info("..failed to fetch '%s' from %s" % (file_record.filename, base_url))
+            log.info("...failed to fetch '%s' from %s" % (file_record.filename, base_url))
             log.debug("%s" % e)
         except IOError:
             log.info("failed to write to '%s'" % file_record.filename, exc_info=True)
 
     # I am managing a cache and a new file has just been retrieved from a remote location
     if cache_folder and fetched:
-        log.info("Updating local cache %s.." % cache_folder)
+        log.info("Updating local cache %s..." % cache_folder)
         try:
             shutil.copy(os.path.join(os.getcwd(), file_record.filename), os.path.join(cache_folder, file_record.digest))
             log.info("Local cache %s updated with %s" % (cache_folder, file_record.filename))
@@ -522,14 +525,12 @@ def remove(absolute_file_path):
         log.info("Impossible to remove %s" % absolute_file_path, exc_info=True)
 
 
-def purge(folder, max_age, gigs):
+def purge(folder, gigs):
     """If gigs is non 0, it deletes files in `folder` until `gigs` GB are free, starting from older files.
-    If max_age is non 0, it deletes all files older than max_age, regardless of the gigs parameter.
-    If both parameters are 0, a full cleanup is performed.
+    If gigs is 0, a full purge will be performed.
     No recursive deletion of files in subfolder is performed."""
 
     gigs *= 1024 * 1024 * 1024
-    threshold = time.time() - max_age * 24 * 60 * 60 * 1.
 
     files = []
     try:
@@ -545,27 +546,20 @@ def purge(folder, max_age, gigs):
 
     files.sort()
 
-    enough_free_space_yet = False
-    found_youngest_file_still_older_than_max_age_yet = False
-    # since 'files' has been ordered, iteration is from old to new files
-    while files:
-        mtime, f = files.pop(0)
-        if max_age and not found_youngest_file_still_older_than_max_age_yet:
-            if mtime < threshold:
-                log.info("removing %s because it's older than %s days ago" % (f, str(max_age)))
-                remove(f)
-            else:
-                found_youngest_file_still_older_than_max_age_yet = True
+    if gigs:
+        enough_free_space_yet = False
+        while files and not enough_free_space_yet:
+            mtime, f = files.pop(0)
 
-        if gigs and not enough_free_space_yet:
             if freespace(folder) >= gigs:
                 enough_free_space_yet = True
             else:
                 log.info("removing %s to free up space" % f)
                 remove(f)
-
-        if not gigs and not max_age:
-            # neither gigs or max_age are specified, performing a full cleanup
+    else:
+        #full cleanup
+        while files:
+            mtime, f = files.pop(0)
             log.info("Full cache purge: removing %s" % f)
             remove(f)
 
@@ -601,7 +595,7 @@ def process_command(options, args):
             log.critical('please specify the cache_folder to be purged with -c or --cache_folder option')
             return False
         else:
-            purge(folder=options['cache_folder'], max_age=options['max_age'], gigs=options['size'])
+            purge(folder=options['cache_folder'], gigs=options['size'])
     elif cmd == 'fetch':
         if not options.get('base_url'):
             log.critical('fetch command requires at least one url provided using ' +
@@ -664,10 +658,6 @@ def main():
     parser.add_option('-s', '--size',
                       help='free space required (in GB)', dest='size',
                       type='float', default=0.)
-    parser.add_option('', '--max-age', dest='max_age', type='int', default=0,
-                      help='''maximum age (in days) for files.  If any file
-                              is older than this (based on mtime), it will be deleted, regardless of how
-                              much free space is required.''')
 
     (options_obj, args) = parser.parse_args()
     # Dictionaries are easier to work with
