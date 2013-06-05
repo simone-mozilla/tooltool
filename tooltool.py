@@ -385,7 +385,7 @@ def touch(f):
     try:
         os.utime(f, None)
     except:
-        log.info('impossible to update utime of file %s' % f)
+        log.warn('impossible to update utime of file %s' % f)
 
 
 # TODO: write tests for this function
