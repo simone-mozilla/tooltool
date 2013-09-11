@@ -106,7 +106,7 @@ class FileRecord(object):
         if self.present():
             return self.size == os.path.getsize(self.filename)
         else:
-            log.debug("trying to validate size on a missing file, %s", % self.filename)
+            log.debug("trying to validate size on a missing file, %s" % self.filename)
             raise MissingFileException(filename=self.filename)
 
     def validate_digest(self):
@@ -114,7 +114,7 @@ class FileRecord(object):
             with open(self.filename, 'rb') as f:
                 return self.digest == digest_file(f, self.algorithm)
         else:
-            log.debug("trying to validate digest on a missing file, %s", % self.filename)
+            log.debug("trying to validate digest on a missing file, %s" % self.filename)
             raise MissingFileException(filename=self.filename)
 
     def validate(self):
